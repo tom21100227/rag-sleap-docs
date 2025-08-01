@@ -13,6 +13,11 @@ LANGSMITH_API_KEY = dotenv.get_key("../.local.env", "LANGSMITH_API_KEY")
 LANGSMITH_PROJECT = "rag-sleap-docs"
 GOOGLE_CLOUD_PROJECT_ID = dotenv.get_key("../.local.env", "GOOGLE_CLOUD_PROJECT_ID")
 
+if not LANGSMITH_API_KEY:
+    raise ValueError("LANGSMITH_API_KEY is not set in the environment variables.")
+if not GOOGLE_CLOUD_PROJECT_ID:
+    raise ValueError("GOOGLE_CLOUD_PROJECT_ID is not set in the environment variables.")
+
 # Set environment variables
 os.environ["LANGSMITH_TRACING_V2"] = LANGSMITH_TRACING_V2
 os.environ["LANGSMITH_ENDPOINT"] = LANGSMITH_ENDPOINT
@@ -65,6 +70,9 @@ Instructions:
 - For troubleshooting questions, provide step-by-step solutions
 - Always cite which part of the documentation (SLEAP, SLEAP-IO, or DREEM) your answer comes from
 - Reference previous conversation when relevant
+- If user's question is not clear, ask for clarification
+- If provided context is insufficient, inform the user politely. Never guess or provide information not in the documentation, unless user explicitly asks for general knowledge.
+- Never answer question that is not related to the software SLEAP, it's documentation, or related experiments. When such request happens, you should only say "Sorry, I can only answer questions related to SLEAP, SLEAP-IO, or DREEM documentation."
 
 Answer:
 """
