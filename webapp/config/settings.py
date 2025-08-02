@@ -48,6 +48,72 @@ HEADERS_TO_SPLIT_ON = [("#", "H1"), ("##", "H2"), ("###", "H3")]
 # Retrieval Configuration
 RETRIEVAL_K = 6
 
+# Query Translation Configuration
+QUERY_TRANSLATION_METHODS = {
+    "None": "none",
+    "MultiQuery": "multi_query", 
+    "RAG Fusion": "rag_fusion",
+    "Decomposition": "decomposition",
+    "Step Back": "step_back"
+}
+
+# Default query translation method
+DEFAULT_QUERY_METHOD = "none"
+
+# HyDE Configuration (can be applied with any method)
+DEFAULT_USE_HYDE = False
+
+# Query translation prompts
+MULTI_QUERY_PROMPT = """
+You are an AI language model assistant. Your task is to generate 3 different versions of the given user question about SLEAP, SLEAP-IO, or DREEM documentation to retrieve relevant documents from a vector database. 
+
+By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
+
+Provide these alternative questions separated by newlines.
+Original question: {question}
+"""
+
+RAG_FUSION_PROMPT = """
+You are a helpful assistant that generates multiple search queries based on a single input query about SLEAP, SLEAP-IO, or DREEM documentation.
+
+Generate 4 different search queries that explore different aspects or phrasings of the original question.
+Make the queries specific to SLEAP ecosystem documentation.
+
+Original question: {question}
+"""
+
+DECOMPOSITION_PROMPT = """
+You are a helpful assistant. Break down the following complex question about SLEAP, SLEAP-IO, or DREEM into 2-4 simpler sub-questions that together would help answer the original question.
+
+Each sub-question should be specific and answerable from technical documentation.
+
+Original question: {question}
+"""
+
+STEP_BACK_PROMPT = """
+You are an expert at asking broader, more general questions. Given a specific question about SLEAP, SLEAP-IO, or DREEM, generate a more general "step back" question that would help provide broader context for answering the specific question.
+
+For example:
+- Specific: "How do I fix CUDA out of memory errors in SLEAP training?"
+- Step back: "What are the memory requirements and optimization strategies for SLEAP training?"
+
+Original question: {question}
+"""
+
+HYDE_PROMPT = """
+You are an expert in SLEAP (Social LEAP Estimates Animal Poses), SLEAP-IO, and DREEM documentation. 
+
+Write a detailed, technical passage that would appear in official documentation to answer this question: {question}
+
+The passage should:
+- Use technical terminology commonly found in SLEAP documentation
+- Include specific function names, parameters, or configuration details when relevant
+- Be written in the style of technical documentation
+- Focus on practical implementation details
+
+Write the hypothetical documentation passage:
+"""
+
 # Prompt Template
 RAG_PROMPT_TEMPLATE = """
 You are a helpful AI assistant specialized in SLEAP (Social LEAP Estimates Animal Poses), SLEAP-IO, and DREEM documentation.

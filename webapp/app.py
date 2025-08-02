@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent))
 from src.embeddings import EmbeddingManager
 from src.memory import ConversationMemory
 from src.rag_chain import RAGChain
-from config.settings import RETRIEVAL_K
+from config.settings import RETRIEVAL_K, QUERY_TRANSLATION_METHODS, DEFAULT_QUERY_METHOD, DEFAULT_USE_HYDE
 
 
 @st.cache_resource
@@ -52,16 +52,18 @@ def main():
     with st.sidebar:
         st.header("💬 Conversation Controls")
         
-        # Add document display settings
-        st.subheader("📄 Document Display")
-        show_retrieved_docs = st.checkbox("Show retrieved documents", value=True)
-        max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
-        
         if st.button("Clear Conversation"):
             rag_chain.memory.clear_memory()
             st.session_state.messages = []
             st.success("Conversation cleared!")
             st.rerun()
+        
+        st.markdown("---")
+        
+        # Add document display settings
+        st.subheader("📄 Document Display")
+        show_retrieved_docs = st.checkbox("Show retrieved documents", value=True)
+        max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
         
         st.markdown("---")
         st.markdown("### 📖 About")
@@ -83,7 +85,45 @@ def main():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Chat input
+    # Chat input with query controls
+    with st.container():
+        # Query controls in columns above the chat input
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            query_method = st.selectbox(
+                "Query Method:",
+                options=list(QUERY_TRANSLATION_METHODS.keys()),
+                index=list(QUERY_TRANSLATION_METHODS.keys()).index("None"),
+                help="Choose how to enhance your query for better retrieval",
+                key="query_method"
+            )
+        
+        with col2:
+            use_hyde = st.checkbox(
+                "Use HyDE",
+                value=DEFAULT_USE_HYDE,
+                help="Generate hypothetical documents to improve semantic matching",
+                key="use_hyde"
+            )
+        
+        with col3:
+            bypass_rag = st.checkbox(
+                "Bypass RAG",
+                value=False,
+                help="Continue conversation without document retrieval",
+                key="bypass_rag"
+            )
+        
+        # Show current configuration
+        if not bypass_rag and (query_method != "None" or use_hyde):
+            config_text = f"🔍 Using: {query_method}"
+            if use_hyde:
+                config_text += " + HyDE"
+            st.info(config_text)
+        elif bypass_rag:
+            st.info("💬 Conversation mode (no document retrieval)")
+    
     if prompt := st.chat_input("Ask a question about SLEAP..."):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -93,18 +133,33 @@ def main():
         # Generate response and get retrieved documents
         try:
             with st.spinner("Thinking..."):
-                result = rag_chain.chat_with_memory(prompt)
+                if bypass_rag:
+                    result = rag_chain.chat_without_rag(prompt)
+                else:
+                    result = rag_chain.chat_with_memory(
+                        prompt,
+                        query_method=QUERY_TRANSLATION_METHODS[query_method],
+                        use_hyde=use_hyde
+                    )
                 response = result["response"]
                 retrieved_docs = result["retrieved_docs"]
+                generated_queries = result.get("generated_queries")
         except Exception as e:
             error_msg = f"Sorry, I encountered an error: {str(e)}"
             response = error_msg
             retrieved_docs = []
+            generated_queries = None
         
         # Show retrieved documents as a separate "Retriever" entity FIRST
-        if show_retrieved_docs and retrieved_docs:
+        if not bypass_rag and show_retrieved_docs and retrieved_docs:
             with st.chat_message("assistant", avatar="🔍"):
                 st.markdown("**Retriever**: I found the following relevant documents:")
+                
+                # Show generated queries if available
+                if generated_queries and len(generated_queries) > 1:
+                    with st.expander("🔄 Generated Queries", expanded=False):
+                        for i, query in enumerate(generated_queries, 1):
+                            st.markdown(f"{i}. {query}")
                 
                 with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
                     # Add tabs for different views
