@@ -47,15 +47,21 @@ class RAGChain:
             | StrOutputParser()
         )
     
-    def chat_with_memory(self, question: str) -> str:
-        """Process a question and return an answer, saving to memory."""
+    def chat_with_memory(self, question: str) -> dict:
+        """Process a question and return both answer and retrieved documents, saving to memory."""
+        # Get retrieved documents
+        retrieved_docs = self.retriever.get_relevant_documents(question)
+        
         # Get the response
         response = self.chain.invoke(question)
         
         # Save to memory
         self.memory.save_context(question, response)
         
-        return response
+        return {
+            "response": response,
+            "retrieved_docs": retrieved_docs
+        }
     
     def chat_without_memory(self, question: str) -> str:
         """Process a question without saving to memory."""

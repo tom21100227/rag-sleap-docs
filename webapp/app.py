@@ -52,6 +52,11 @@ def main():
     with st.sidebar:
         st.header("💬 Conversation Controls")
         
+        # Add document display settings
+        st.subheader("📄 Document Display")
+        show_retrieved_docs = st.checkbox("Show retrieved documents", value=True)
+        max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
+        
         if st.button("Clear Conversation"):
             rag_chain.memory.clear_memory()
             st.session_state.messages = []
@@ -85,18 +90,73 @@ def main():
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Generate response
+        # Generate response and get retrieved documents
+        try:
+            with st.spinner("Thinking..."):
+                result = rag_chain.chat_with_memory(prompt)
+                response = result["response"]
+                retrieved_docs = result["retrieved_docs"]
+        except Exception as e:
+            error_msg = f"Sorry, I encountered an error: {str(e)}"
+            response = error_msg
+            retrieved_docs = []
+        
+        # Show retrieved documents as a separate "Retriever" entity FIRST
+        if show_retrieved_docs and retrieved_docs:
+            with st.chat_message("assistant", avatar="🔍"):
+                st.markdown("**Retriever**: I found the following relevant documents:")
+                
+                with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
+                    # Add tabs for different views
+                    tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
+                    
+                    with tab1:
+                        # Summary view
+                        sources = {}
+                        for doc in retrieved_docs:
+                            source = doc.metadata.get('source', 'Unknown')
+                            sources[source] = sources.get(source, 0) + 1
+                        
+                        st.markdown("**Sources Retrieved:**")
+                        for source, count in sources.items():
+                            st.markdown(f"- {source}: {count} document(s)")
+                    
+                    with tab2:
+                        # Detailed view
+                        for i, doc in enumerate(retrieved_docs, 1):
+                            with st.container():
+                                st.markdown(f"### Document {i}")
+                                
+                                # Metadata in columns
+                                col1, col2, col3 = st.columns([1, 1, 1])
+                                with col1:
+                                    st.markdown(f"**Source:** `{doc.metadata.get('source', 'Unknown')}`")
+                                with col2:
+                                    st.markdown(f"**File:** `{doc.metadata.get('file', 'Unknown')}`")
+                                with col3:
+                                    if 'object' in doc.metadata:
+                                        st.markdown(f"**Object:** `{doc.metadata['object']}`")
+                                
+                                # Content
+                                content_preview = doc.page_content[:max_content_length]
+                                if len(doc.page_content) > max_content_length:
+                                    content_preview += "..."
+                                
+                                st.markdown("**Content:**")
+                                st.text_area(
+                                    f"Document {i} Content",
+                                    content_preview,
+                                    height=150,
+                                    key=f"doc_content_{i}_{len(st.session_state.messages)}",
+                                    label_visibility="collapsed"
+                                )
+                                
+                                if i < len(retrieved_docs):
+                                    st.divider()
+        
+        # Show assistant response AFTER retriever
         with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            
-            try:
-                with st.spinner("Thinking..."):
-                    response = rag_chain.chat_with_memory(prompt)
-                message_placeholder.markdown(response)
-            except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                message_placeholder.markdown(error_msg)
-                response = error_msg
+            st.markdown(response)
         
         # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response})
