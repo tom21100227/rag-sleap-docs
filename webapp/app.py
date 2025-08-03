@@ -71,17 +71,23 @@ def main():
         # RAG Controls
         st.subheader("🔧 Query Settings")
 
+        # Filter out unimplemented methods
+        available_methods = {k: v for k, v in QUERY_TRANSLATION_METHODS.items() 
+                           if k not in ["Step Back", "Decomposition"]}
+
         query_method = st.selectbox(
-            "Query Translation Method:",
-            options=list(QUERY_TRANSLATION_METHODS.keys()),
-            index=list(QUERY_TRANSLATION_METHODS.keys()).index("None"),
+            "Query Method:",
+            options=list(available_methods.keys()),
+            index=list(available_methods.keys()).index("None"),
             help="Choose how to enhance your query for better retrieval"
         )
         
+        # Disable HyDE for now
         use_hyde = st.checkbox(
             "Use HyDE",
-            value=DEFAULT_USE_HYDE,
-            help="Generate hypothetical documents to improve semantic matching"
+            value=False,
+            disabled=True,
+            help="Generate hypothetical documents to improve semantic matching (Currently disabled)"
         )
         
         bypass_rag = st.checkbox(
@@ -121,9 +127,13 @@ def main():
                 if bypass_rag:
                     result = rag_chain.chat_without_rag(prompt)
                 else:
+                    # Use the filtered available methods
+                    available_methods = {k: v for k, v in QUERY_TRANSLATION_METHODS.items() 
+                                       if k not in ["Step Back", "Decomposition"]}
+                    
                     result = rag_chain.chat_with_memory(
                         prompt,
-                        query_method=QUERY_TRANSLATION_METHODS[query_method],
+                        query_method=available_methods[query_method],
                         use_hyde=use_hyde
                     )
                 response = result["response"]
