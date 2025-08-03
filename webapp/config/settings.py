@@ -24,11 +24,19 @@ os.environ["LANGSMITH_ENDPOINT"] = LANGSMITH_ENDPOINT
 os.environ["LANGSMITH_API_KEY"] = LANGSMITH_API_KEY
 os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
 
+REMOTE_REPO_URL = {
+    "sleap": "https://github.com/talmolab/sleap.git",
+    "sleap-io": "https://github.com/talmolab/sleap-io.git",
+    "dreem": "https://github.com/talmolab/dreem.git",
+    "sleap-nn": "https://github.com/talmolab/sleap-nn.git"
+}
+
 # Repository Paths - Update these to match your local setup
 REPO_PATHS = {
-    "sleap": Path("/Users/chan/PersonalProjects/rag-sleap-docs/sleap"),
-    "sleap-io": Path("/Users/chan/PersonalProjects/rag-sleap-docs/sleap-io"),
-    "dreem": Path("/Users/chan/PersonalProjects/rag-sleap-docs/dreem")
+    "sleap": Path("/home/chan/PersonalProjects/rag-sleap-docs/sleap"),
+    "sleap-io": Path("/home/chan/PersonalProjects/rag-sleap-docs/sleap-io"),
+    "dreem": Path("/home/chan/PersonalProjects/rag-sleap-docs/dreem"),
+    "sleap-nn": Path("/home/chan/PersonalProjects/rag-sleap-docs/sleap-nn")
 }
 
 # ChromaDB Configuration

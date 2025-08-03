@@ -12,11 +12,32 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from src.document_parser import DocumentParser
 from src.embeddings import AdaptiveDocumentSplitter, EmbeddingManager
-from config.settings import REPO_PATHS
+from config.settings import REPO_PATHS, REMOTE_REPO_URL
+import argparse
+import subprocess
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Initialize the knowledge base.")
+    parser.add_argument(
+        '--clone-repos', action='store_true',
+        help='Clone remote repositories before initializing the database'
+    )
+    return parser.parse_args()
 
 
 def main():
     """Initialize the knowledge base."""
+    args = parse_args()
+    if args.clone_repos:
+        print("\n🔄 Cloning remote repositories…")
+        for name, url in REMOTE_REPO_URL.items():
+            path = REPO_PATHS[name]
+            if not path.exists():
+                print(f"→ Cloning {name} into {path}…")
+                subprocess.run(["git", "clone", url, str(path)], check=True)
+            else:
+                print(f"→ {name} already exists at {path}, skipping.")
     print("🚀 Initializing SLEAP Documentation RAG System...")
     
     # Step 1: Parse all documents

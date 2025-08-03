@@ -15,7 +15,7 @@ install-deps:  ## Install Python dependencies
 
 init-db:  ## Initialize the knowledge base
 	@echo "🔍 Initializing knowledge base..."
-	@python scripts/initialize_db.py
+	@python scripts/initialize_db.py $(if $(CLONE_REPOS),--clone-repos,)
 
 analyze-chunks:  ## Analyze chunking strategy and show statistics
 	@echo "🔍 Analyzing chunking strategy..."
