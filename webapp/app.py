@@ -67,15 +67,37 @@ def main():
         max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
         
         st.markdown("---")
-        st.markdown("### 📖 About")
-        st.markdown("""
-        This assistant can help you with (hopefully):
-        - SLEAP installation and setup
-        - API documentation and usage
-        - SLEAP-IO functionality
-        - DREEM integration
-        - Code examples and troubleshooting
-        """)
+        
+        # RAG Controls
+        st.subheader("🔧 Query Settings")
+
+        query_method = st.selectbox(
+            "Query Translation Method:",
+            options=list(QUERY_TRANSLATION_METHODS.keys()),
+            index=list(QUERY_TRANSLATION_METHODS.keys()).index("None"),
+            help="Choose how to enhance your query for better retrieval"
+        )
+        
+        use_hyde = st.checkbox(
+            "Use HyDE",
+            value=DEFAULT_USE_HYDE,
+            help="Generate hypothetical documents to improve semantic matching"
+        )
+        
+        bypass_rag = st.checkbox(
+            "Bypass RAG",
+            value=False,
+            help="Continue conversation without document retrieval"
+        )
+        
+        # Show current configuration
+        if not bypass_rag and (query_method != "None" or use_hyde):
+            config_text = f"🔍 Using: {query_method}"
+            if use_hyde:
+                config_text += " + HyDE"
+            st.info(config_text)
+        elif bypass_rag:
+            st.info("💬 Conversation mode")
     
     # Chat interface
     if "messages" not in st.session_state:
@@ -86,45 +108,7 @@ def main():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Chat input with query controls
-    with st.container():
-        # Query controls in columns above the chat input
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
-        with col1:
-            query_method = st.selectbox(
-                "Query Method:",
-                options=list(QUERY_TRANSLATION_METHODS.keys()),
-                index=list(QUERY_TRANSLATION_METHODS.keys()).index("None"),
-                help="Choose how to enhance your query for better retrieval",
-                key="query_method"
-            )
-        
-        with col2:
-            use_hyde = st.checkbox(
-                "Use HyDE",
-                value=DEFAULT_USE_HYDE,
-                help="Generate hypothetical documents to improve semantic matching",
-                key="use_hyde"
-            )
-        
-        with col3:
-            bypass_rag = st.checkbox(
-                "Bypass RAG",
-                value=False,
-                help="Continue conversation without document retrieval",
-                key="bypass_rag"
-            )
-        
-        # Show current configuration
-        if not bypass_rag and (query_method != "None" or use_hyde):
-            config_text = f"🔍 Using: {query_method}"
-            if use_hyde:
-                config_text += " + HyDE"
-            st.info(config_text)
-        elif bypass_rag:
-            st.info("💬 Conversation mode (no document retrieval)")
-    
+    # Chat input
     if prompt := st.chat_input("Ask a question about SLEAP..."):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
