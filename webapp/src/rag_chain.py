@@ -104,7 +104,7 @@ class RAGChain:
             return [loads(doc) for doc in unique_docs]
 
         # Multi-query retrieval logic chain
-        retrieval_logic_chain = (
+        multi_query_retrieval_logic_chain = (
             # 1. Start with the question
             {"question": RunnablePassthrough()}
             # 2. Generate queries and add them to the dictionary
@@ -122,10 +122,9 @@ class RAGChain:
             )
         )
         
-
         # Multi-query chain with observable steps
         self.multi_query_chain = (
-            retrieval_logic_chain
+            multi_query_retrieval_logic_chain
             # 4. Handle the side-effect (save state for UI)
             | RunnableLambda(self._save_retrieval_state)
             # 5. Assemble the context for the final prompt
@@ -138,9 +137,70 @@ class RAGChain:
             | self.llm
             | StrOutputParser()
         ).with_config({"run_name": "multi_query_chain"})
+        
+        def reciprocal_rank_fusion(results: list[list], k=60):
+            """ Reciprocal_rank_fusion that takes multiple lists of ranked documents 
+                and an optional parameter k used in the RRF formula """
+            
+            # Initialize a dictionary to hold fused scores for each unique document
+            fused_scores = {}
+
+            # Iterate through each list of ranked documents
+            for docs in results:
+                # Iterate through each document in the list, with its rank (position in the list)
+                for rank, doc in enumerate(docs):
+                    # Convert the document to a string format to use as a key (assumes documents can be serialized to JSON)
+                    doc_str = dumps(doc)
+                    # If the document is not yet in the fused_scores dictionary, add it with an initial score of 0
+                    if doc_str not in fused_scores:
+                        fused_scores[doc_str] = 0
+                    # Retrieve the current score of the document, if any
+                    previous_score = fused_scores[doc_str]
+                    # Update the score of the document using the RRF formula: 1 / (rank + k)
+                    fused_scores[doc_str] += 1 / (rank + k)
+
+            # Sort the documents based on their fused scores in descending order to get the final reranked results
+            reranked_results = [
+                loads(doc)
+                for doc, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+            ]
+
+            # Return the reranked results as a list of tuples, each containing the document and its fused score
+            return reranked_results
+
+        rag_fusion_retrieval_logic_chain = (
+            # 1. Start with the question
+            {"question": RunnablePassthrough()}
+            # 2. Generate queries and add them to the dictionary
+            | RunnablePassthrough.assign(
+                generated_queries=(lambda x: x["question"]) | self.generate_queries_chain
+            ).with_config({"run_name": "generate_queries"})
+            # 3. Retrieve docs using the queries and add them to the dictionary
+            | RunnablePassthrough.assign(
+                retrieved_docs=(
+                    (lambda x: x["generated_queries"]) 
+                    | self.retriever.map()
+                    | reciprocal_rank_fusion
+                ).with_config({"run_name": "fuse_docs"})
+            )
+        )
 
         # Placeholder chains for future methods (not implemented)
-        self.rag_fusion_chain = None
+        self.rag_fusion_chain = (
+            rag_fusion_retrieval_logic_chain
+            # 4. Handle the side-effect (save state for UI)
+            | RunnableLambda(self._save_retrieval_state)
+            # 5. Assemble the context for the final prompt
+            | {
+                "context": lambda x: self._format_docs(x["retrieved_docs"]),
+                "question": lambda x: x["question"],
+                "chat_history": RunnableLambda(self._get_chat_history),
+            }
+            | self.prompt
+            | self.llm
+            | StrOutputParser()
+        ).with_config({"run_name": "rag_fusion_chain"})
+        
         self.decomposition_chain = None
         self.step_back_chain = None
         
@@ -161,7 +221,7 @@ class RAGChain:
         elif query_method == "multi_query":
             chain = self.multi_query_chain
         elif query_method == "rag_fusion":
-            raise NotImplementedError("RAG Fusion is not implemented yet.")
+            chain = self.rag_fusion_chain
         elif query_method == "decomposition":
             raise NotImplementedError("Decomposition is not implemented yet.")
         elif query_method == "step_back":
