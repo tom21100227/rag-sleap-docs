@@ -47,6 +47,7 @@ def main():
     except Exception as e:
         st.error(f"Failed to initialize the system: {e}")
         st.stop()
+        return
     
     # Sidebar for controls
     with st.sidebar:
@@ -215,28 +216,6 @@ def main():
         
         # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response})
-    
-    if len(st.session_state.messages) == 0:
-        # Example questions
-        st.markdown("---")
-        st.markdown("### 💡 Example Questions")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("How do I install SLEAP?", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "How do I install SLEAP?"})
-                st.rerun()
-        
-        with col2:
-            if st.button("What are the GPU requirements?", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "What are the GPU requirements?"})
-                st.rerun()
-        
-        with col3:
-            if st.button("How do I use DREEM with SLEAP?", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "How do I use DREEM with SLEAP predictions?"})
-                st.rerun()
 
 
 if __name__ == "__main__":
