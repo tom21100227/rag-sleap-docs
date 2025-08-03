@@ -81,7 +81,7 @@ QUERY_TRANSLATION_METHODS = {
 }
 
 # Default query translation method
-DEFAULT_QUERY_METHOD = "none"
+DEFAULT_QUERY_METHOD = "RAG Fusion"
 
 # HyDE Configuration (can be applied with any method)
 DEFAULT_USE_HYDE = False

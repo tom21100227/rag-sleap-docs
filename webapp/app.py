@@ -49,6 +49,10 @@ def main():
         st.stop()
         return
     
+    # Initialize session state for tracking if we've had a conversation
+    if "has_chatted" not in st.session_state:
+        st.session_state.has_chatted = False
+    
     # Sidebar for controls
     with st.sidebar:
         st.header("💬 Conversation Controls")
@@ -56,6 +60,7 @@ def main():
         if st.button("Clear Conversation"):
             rag_chain.memory.clear_memory()
             st.session_state.messages = []
+            st.session_state.has_chatted = False  # Reset chat state
             st.success("Conversation cleared!")
             st.rerun()
         
@@ -78,7 +83,7 @@ def main():
         query_method = st.selectbox(
             "Query Method:",
             options=list(available_methods.keys()),
-            index=list(available_methods.keys()).index("None"),
+            index=list(available_methods.keys()).index(DEFAULT_QUERY_METHOD),
             help="Choose how to enhance your query for better retrieval"
         )
         
@@ -90,20 +95,28 @@ def main():
             help="Generate hypothetical documents to improve semantic matching (Currently disabled)"
         )
         
-        bypass_rag = st.checkbox(
-            "Bypass RAG",
-            value=False,
-            help="Continue conversation without document retrieval"
+        # Auto-bypass RAG after first prompt (default behavior)
+        bypass_rag_after_first = st.checkbox(
+            "Bypass RAG after first prompt",
+            value=True,  # Default to True for auto-bypass behavior
+            help="Automatically switch to conversation mode after the first question"
         )
         
+        # Determine if we should actually bypass RAG for this prompt
+        should_bypass_rag = bypass_rag_after_first and st.session_state.has_chatted
+        
         # Show current configuration
-        if not bypass_rag and (query_method != "None" or use_hyde):
+        if not should_bypass_rag and (query_method != "None" or use_hyde):
             config_text = f"🔍 Using: {query_method}"
             if use_hyde:
                 config_text += " + HyDE"
             st.info(config_text)
-        elif bypass_rag:
+        elif should_bypass_rag:
             st.info("💬 Conversation mode")
+        elif not st.session_state.has_chatted:
+            st.info("🔍 RAG mode (first question)")
+        else:
+            st.info("🔍 RAG mode")
     
     # Chat interface
     if "messages" not in st.session_state:
@@ -124,7 +137,7 @@ def main():
         # Generate response and get retrieved documents
         try:
             with st.spinner("Thinking..."):
-                if bypass_rag:
+                if should_bypass_rag:
                     result = rag_chain.chat_without_rag(prompt)
                 else:
                     # Use the filtered available methods
@@ -145,8 +158,11 @@ def main():
             retrieved_docs = []
             generated_queries = None
         
+        # Mark that we've had a chat (this will auto-check bypass RAG on next rerun)
+        st.session_state.has_chatted = True
+        
         # Show retrieved documents as a separate "Retriever" entity FIRST
-        if not bypass_rag and show_retrieved_docs and retrieved_docs:
+        if not should_bypass_rag and show_retrieved_docs and retrieved_docs:
             with st.chat_message("assistant", avatar="🔍"):
                 st.markdown("**Retriever**: I found the following relevant documents:")
                 
