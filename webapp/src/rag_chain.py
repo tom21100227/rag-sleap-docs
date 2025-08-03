@@ -1,7 +1,9 @@
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda, RunnableConfig
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.documents import Document
+from langchain.load import dumps, loads
 from config.settings import (
     LLM_MODEL, LLM_TEMPERATURE, RAG_PROMPT_TEMPLATE,
     MULTI_QUERY_PROMPT, RAG_FUSION_PROMPT, DECOMPOSITION_PROMPT, 
@@ -29,123 +31,154 @@ class RAGChain:
         )
         self.prompt = ChatPromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
         
+        # Build the query generation chain
+        self.generate_queries_chain = (
+            ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT)
+            | self.llm
+            | StrOutputParser()
+            | RunnableLambda(self._parse_queries)
+        )
+        
         # Build the conversational RAG chain
         self._build_chain()
     
-    def _format_docs(self, docs):
+    def _format_docs(self, docs: List[Document]) -> str:
         """Format retrieved documents into a single string."""
-        return "\n\n".join(doc.page_content for doc in docs)
-    
+        return "\n\n".join(str(doc.metadata) + doc.page_content for doc in docs)
+
     def _get_chat_history(self, _):
         """Get chat history from memory."""
         return self.memory.get_chat_history()
     
+    def _flatten_docs(self, docs_per_query: List[List[Document]]) -> List[Document]:
+        """Flattens the list of lists of documents into a single list."""
+        return [doc for sublist in docs_per_query for doc in sublist]
+    
+    def _save_retrieval_state(self, chain_output: dict) -> dict:
+        """
+        This function's only job is to save the intermediate state for display.
+        It's a passthrough, so it returns its input untouched.
+        """
+        self._last_retrieved_docs = chain_output.get("retrieved_docs", [])
+        self._last_generated_queries = chain_output.get("generated_queries", [])
+        return chain_output  # Must return the input to not break the chain
+    
+    def _parse_queries(self, result: str) -> List[str]:
+        """Parse the LLM output into a list of queries."""
+        queries = [q.strip() for q in result.split('\n') if q.strip()]
+        return queries
+    
     def _build_chain(self):
-        """Build the conversational RAG chain."""
-        self.chain = (
-            {
-                "context": self.retriever | self._format_docs,
-                "question": RunnablePassthrough(),
+        """Build all the conversational RAG chains."""
+        # Default single-query chain with state storage
+        default_retrieval_chain = (
+            {"question": RunnablePassthrough()}
+            | RunnablePassthrough.assign(
+                retrieved_docs=lambda x: self.retriever.get_relevant_documents(x["question"]),
+                generated_queries=lambda x: None  # No generated queries for default
+            )
+        )
+        
+        self.default_chain = (
+            default_retrieval_chain
+            | RunnableLambda(self._save_retrieval_state)
+            | {
+                "context": lambda x: self._format_docs(x["retrieved_docs"]),
+                "question": lambda x: x["question"],
                 "chat_history": RunnableLambda(self._get_chat_history),
             }
             | self.prompt
             | self.llm
             | StrOutputParser()
+        ).with_config({
+            "run_name": "default_chain"
+        })
+        
+        def get_unique_union(documents: list[list]):
+            """ Unique union of retrieved docs """
+            # Flatten list of lists, and convert each Document to string
+            flattened_docs = [dumps(doc) for doc in documents]
+            # Get unique documents
+            unique_docs = list(set(flattened_docs))
+            # Return
+            return [loads(doc) for doc in unique_docs]
+
+        # Multi-query retrieval logic chain
+        retrieval_logic_chain = (
+            # 1. Start with the question
+            {"question": RunnablePassthrough()}
+            # 2. Generate queries and add them to the dictionary
+            | RunnablePassthrough.assign(
+                generated_queries=(lambda x: x["question"]) | self.generate_queries_chain
+            ).with_config({"run_name": "generate_queries"})
+            # 3. Retrieve docs using the queries and add them to the dictionary
+            | RunnablePassthrough.assign(
+                retrieved_docs=(
+                    (lambda x: x["generated_queries"]) 
+                    | self.retriever.map()
+                    | self._flatten_docs
+                    | get_unique_union
+                ).with_config({"run_name": "retrieve_docs"})
+            )
         )
-    
-    def _generate_queries(self, question: str, method: str) -> List[str]:
-        """Generate multiple queries based on the translation method."""
-        if method == "none":
-            return [question]
         
-        prompt_map = {
-            "multi_query": MULTI_QUERY_PROMPT,
-            "rag_fusion": RAG_FUSION_PROMPT,
-            "decomposition": DECOMPOSITION_PROMPT,
-            "step_back": STEP_BACK_PROMPT
-        }
+
+        # Multi-query chain with observable steps
+        self.multi_query_chain = (
+            retrieval_logic_chain
+            # 4. Handle the side-effect (save state for UI)
+            | RunnableLambda(self._save_retrieval_state)
+            # 5. Assemble the context for the final prompt
+            | {
+                "context": lambda x: self._format_docs(x["retrieved_docs"]),
+                "question": lambda x: x["question"],
+                "chat_history": RunnableLambda(self._get_chat_history),
+            }
+            | self.prompt
+            | self.llm
+            | StrOutputParser()
+        ).with_config({"run_name": "multi_query_chain"})
+
+        # Placeholder chains for future methods (not implemented)
+        self.rag_fusion_chain = None
+        self.decomposition_chain = None
+        self.step_back_chain = None
         
-        if method not in prompt_map:
-            return [question]
-        
-        prompt = ChatPromptTemplate.from_template(prompt_map[method])
-        chain = prompt | self.llm | StrOutputParser()
-        
-        result = chain.invoke({"question": question})
-        
-        # Split the result into individual queries
-        queries = [q.strip() for q in result.split('\n') if q.strip()]
-        
-        # Always include the original question
-        if question not in queries:
-            queries.insert(0, question)
-            
-        return queries
-    
-    def _apply_hyde(self, queries: List[str]) -> List[str]:
-        """Apply HyDE (Hypothetical Document Embeddings) to queries."""
-        hyde_prompt = ChatPromptTemplate.from_template(HYDE_PROMPT)
-        hyde_chain = hyde_prompt | self.llm | StrOutputParser()
-        
-        hyde_docs = []
-        for query in queries:
-            try:
-                hyde_doc = hyde_chain.invoke({"question": query})
-                hyde_docs.append(hyde_doc)
-            except Exception as e:
-                # Fallback to original query if HyDE fails
-                hyde_docs.append(query)
-        
-        return hyde_docs
-    
-    def _retrieve_with_fusion(self, queries: List[str], k: int = 6) -> List:
-        """Retrieve documents using multiple queries and apply reciprocal rank fusion."""
-        all_docs = []
-        doc_scores = {}
-        
-        for query in queries:
-            docs = self.retriever.get_relevant_documents(query)
-            for rank, doc in enumerate(docs[:k]):
-                doc_key = doc.page_content[:100]  # Use content snippet as key
-                if doc_key not in doc_scores:
-                    doc_scores[doc_key] = {"doc": doc, "score": 0}
-                
-                # Reciprocal rank fusion: 1/(rank + 60)
-                doc_scores[doc_key]["score"] += 1.0 / (rank + 60)
-        
-        # Sort by fusion score and return top k documents
-        sorted_docs = sorted(doc_scores.values(), key=lambda x: x["score"], reverse=True)
-        return [item["doc"] for item in sorted_docs[:k]]
-    
+        # Storage for retrieved docs and queries (for UI display)
+        self._last_retrieved_docs = []
+        self._last_generated_queries = []
+
     def chat_with_memory(self, question: str, query_method: str = "none", use_hyde: bool = False) -> dict:
         """Process a question with query translation and return both answer and retrieved documents."""
         
-        # Generate multiple queries based on the method
-        queries = self._generate_queries(question, query_method)
-        
-        # Apply HyDE if requested
+        # HyDE is not implemented yet
         if use_hyde:
-            queries = self._apply_hyde(queries)
+            raise NotImplementedError("HyDE is not implemented yet.")
         
-        # Retrieve documents
-        if query_method == "rag_fusion" or len(queries) > 1:
-            # Use fusion for multiple queries
-            retrieved_docs = self._retrieve_with_fusion(queries)
+        # Select the appropriate chain - retrieval and storage happens inside the chain
+        if query_method == "none":
+            chain = self.default_chain
+        elif query_method == "multi_query":
+            chain = self.multi_query_chain
+        elif query_method == "rag_fusion":
+            raise NotImplementedError("RAG Fusion is not implemented yet.")
+        elif query_method == "decomposition":
+            raise NotImplementedError("Decomposition is not implemented yet.")
+        elif query_method == "step_back":
+            raise NotImplementedError("Step Back is not implemented yet.")
         else:
-            # Standard retrieval for single query
-            retrieved_docs = self.retriever.get_relevant_documents(queries[0])
+            raise ValueError(f"Unknown query method: {query_method}")
         
-        # Format context and get response
-        context = self._format_docs(retrieved_docs)
-        response = self.chain.invoke(question)
+        # Get response from the selected chain (this also populates _last_retrieved_docs and _last_generated_queries)
+        response = chain.invoke(question)
         
         # Save to memory
         self.memory.save_context(question, response)
         
         return {
             "response": response,
-            "retrieved_docs": retrieved_docs,
-            "generated_queries": queries if query_method != "none" else None
+            "retrieved_docs": self._last_retrieved_docs,
+            "generated_queries": self._last_generated_queries
         }
     
     def chat_without_rag(self, question: str) -> dict:
@@ -187,4 +220,4 @@ class RAGChain:
     
     def chat_without_memory(self, question: str) -> str:
         """Process a question without saving to memory."""
-        return self.chain.invoke(question)
+        return self.default_chain.invoke(question)

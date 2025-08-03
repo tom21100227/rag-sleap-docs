@@ -88,7 +88,7 @@ DEFAULT_USE_HYDE = False
 
 # Query translation prompts
 MULTI_QUERY_PROMPT = """
-You are an AI language model assistant. Your task is to generate 3 different versions of the given user question about SLEAP, SLEAP-IO, or DREEM documentation to retrieve relevant documents from a vector database. 
+You are an AI language model assistant. Your task is to generate 3 different versions of the given user question about SLEAP, SLEAP-IO, SLEAP-NN, DREEM documentation to retrieve relevant documents from a vector database. 
 
 By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
 
@@ -97,12 +97,11 @@ Original question: {question}
 """
 
 RAG_FUSION_PROMPT = """
-You are a helpful assistant that generates multiple search queries based on a single input query about SLEAP, SLEAP-IO, or DREEM documentation.
+You are a helpful assistant that generates multiple search queries based on a single input query. \n
 
-Generate 4 different search queries that explore different aspects or phrasings of the original question.
-Make the queries specific to SLEAP ecosystem documentation.
+Generate multiple search queries related to: {question} \n
 
-Original question: {question}
+Output (4 queries):
 """
 
 DECOMPOSITION_PROMPT = """
