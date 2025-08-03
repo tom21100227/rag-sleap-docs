@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.document_parser import DocumentParser
-from src.embeddings import DocumentSplitter, EmbeddingManager
+from src.embeddings import AdaptiveDocumentSplitter, EmbeddingManager
 from config.settings import REPO_PATHS
 
 
@@ -29,8 +29,8 @@ def main():
         return
     
     # Step 2: Split documents into chunks
-    print("\n✂️  Step 2: Splitting documents into chunks...")
-    splitter = DocumentSplitter()
+    print("\n✂️  Step 2: Splitting documents into adaptive chunks...")
+    splitter = AdaptiveDocumentSplitter()
     chunks = splitter.split_documents(raw_documents)
     
     # Step 3: Create embeddings and store in vector database  

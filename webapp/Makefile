@@ -1,4 +1,4 @@
-.PHONY: help setup install-deps init-db run-webapp run-cli clean
+.PHONY: help setup install-deps init-db analyze-chunks config-tuner run-webapp run-cli clean
 
 help:  ## Show this help message
 	@echo "SLEAP Documentation RAG Assistant"
@@ -16,6 +16,14 @@ install-deps:  ## Install Python dependencies
 init-db:  ## Initialize the knowledge base
 	@echo "🔍 Initializing knowledge base..."
 	@python scripts/initialize_db.py
+
+analyze-chunks:  ## Analyze chunking strategy and show statistics
+	@echo "🔍 Analyzing chunking strategy..."
+	@python scripts/analyze_chunks.py
+
+config-tuner:  ## Interactive tool to tune chunking configuration
+	@echo "⚙️  Opening configuration tuner..."
+	@python scripts/config_tuner.py
 
 run-webapp:  ## Run the Streamlit webapp
 	@echo "🌐 Starting webapp..."

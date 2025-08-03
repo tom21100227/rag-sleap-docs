@@ -4,11 +4,26 @@ A conversational AI assistant specialized in SLEAP (Social LEAP Estimates Animal
 
 ## Features
 
-- Intelligent document parsing and indexing of SLEAP ecosystem documentation
-- Smart embedding with AST-based code analysis
-- Conversational interface with memory
-- ChromaDB vector storage
-- Google Vertex AI integration
+- **Intelligent document parsing** with AST-based code analysis
+- **Adaptive chunking strategy** that creates larger, more contextual chunks
+- **Smart header-level selection** based on content size (tries H1 first, then H2, H3, etc.)
+- **Automatic chunk combining** for small related sections
+- **Conversational interface** with memory using Google Vertex AI
+- **ChromaDB vector storage** for efficient similarity search
+- **Multiple interfaces**: Web UI (Streamlit) and CLI
+
+## Adaptive Chunking Strategy
+
+The system uses an intelligent chunking approach:
+
+- **Target chunk size**: 2000 characters (vs. traditional 1000)
+- **Maximum chunk size**: 4000 characters before forced splitting
+- **Header-level adaptation**: Analyzes content to choose optimal split points
+  - Large documents: Split by H1 headers first
+  - Medium documents: Split by H2 headers
+  - Small documents: Split by H3 headers or keep intact
+- **Smart combining**: Merges small adjacent sections from the same file
+- **Semantic preservation**: Keeps code docstrings and coherent sections intact
 
 ## Setup
 
@@ -35,6 +50,11 @@ GOOGLE_CLOUD_PROJECT_ID=your_project_id
 ### Initialize the knowledge base:
 ```bash
 python scripts/initialize_db.py
+```
+
+### Analyze chunking strategy (optional):
+```bash
+make analyze-chunks  # Shows chunk size distribution and samples
 ```
 
 ### Run the webapp:

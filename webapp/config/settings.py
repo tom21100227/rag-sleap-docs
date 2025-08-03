@@ -45,6 +45,21 @@ CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 HEADERS_TO_SPLIT_ON = [("#", "H1"), ("##", "H2"), ("###", "H3")]
 
+# Adaptive Chunking Configuration
+ADAPTIVE_CHUNKING = {
+    "target_chunk_size": 1500,      # Sweet spot for context vs size
+    "max_chunk_size": 2500,         # Hard limit before forced recursive splitting  
+    "min_chunk_size": 600,          # Minimum viable chunk size
+    "size_threshold_multiplier": 1.3,  # When to try next header level (more aggressive)
+    "header_priorities": [
+        ("#", "H1"),      # Try H1 first (largest sections)
+        ("##", "H2"),     # Then H2 (medium sections) 
+        ("###", "H3"),    # Finally H3 (smallest sections)
+        ("####", "H4"),   # Even smaller if needed
+        ("#####", "H5")   # Smallest header level
+    ]
+}
+
 # Retrieval Configuration
 RETRIEVAL_K = 6
 
