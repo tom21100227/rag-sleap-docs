@@ -6,7 +6,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent))
 
 from src.embeddings import EmbeddingManager
-from src.memory import ConversationMemory
 from src.rag_chain import RAGChain
 from config.settings import RETRIEVAL_K, QUERY_TRANSLATION_METHODS, DEFAULT_QUERY_METHOD, DEFAULT_USE_HYDE
 
@@ -25,8 +24,7 @@ def initialize_rag_system():
         st.stop()
     
     retriever = embedding_manager.get_retriever(k=RETRIEVAL_K)
-    memory = ConversationMemory()
-    rag_chain = RAGChain(retriever, memory)
+    rag_chain = RAGChain(retriever)
     
     return rag_chain
 
@@ -58,7 +56,6 @@ def main():
         st.header("💬 Conversation Controls")
         
         if st.button("Clear Conversation"):
-            rag_chain.memory.clear_memory()
             st.session_state.messages = []
             st.session_state.has_chatted = False  # Reset chat state
             st.success("Conversation cleared!")
@@ -137,8 +134,11 @@ def main():
         # Generate response and get retrieved documents
         try:
             with st.spinner("Thinking..."):
+                # Prepare chat history (exclude the current message we just added)
+                chat_history = st.session_state.messages[:-1] if st.session_state.messages else []
+                
                 if should_bypass_rag:
-                    result = rag_chain.chat_without_rag(prompt)
+                    result = rag_chain.chat_without_rag(prompt, chat_history=chat_history)
                 else:
                     # Use the filtered available methods
                     available_methods = {k: v for k, v in QUERY_TRANSLATION_METHODS.items() 
@@ -146,6 +146,7 @@ def main():
                     
                     result = rag_chain.chat_with_memory(
                         prompt,
+                        chat_history=chat_history,
                         query_method=available_methods[query_method],
                         use_hyde=use_hyde
                     )

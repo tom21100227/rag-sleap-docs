@@ -45,7 +45,7 @@ COLLECTION_NAME = "sleap"
 
 # Model Configuration
 EMBEDDING_MODEL = "text-embedding-004"
-LLM_MODEL = "gemini-2.0-flash-lite"
+LLM_MODEL = "gemini-2.5-flash"
 LLM_TEMPERATURE = 0.2
 
 # Text Splitting Configuration

@@ -9,27 +9,28 @@ from config.settings import (
     MULTI_QUERY_PROMPT, RAG_FUSION_PROMPT, DECOMPOSITION_PROMPT, 
     STEP_BACK_PROMPT, HYDE_PROMPT
 )
-from src.memory import ConversationMemory
 import vertexai
 from config.settings import GOOGLE_CLOUD_PROJECT_ID
-from typing import List
+from typing import List, Dict, Any
 import numpy as np
 
 
 class RAGChain:
     """Handles the RAG (Retrieval-Augmented Generation) chain."""
     
-    def __init__(self, retriever, memory: ConversationMemory):
+    def __init__(self, retriever):
         # Initialize Vertex AI
         vertexai.init(project=GOOGLE_CLOUD_PROJECT_ID)
         
         self.retriever = retriever
-        self.memory = memory
         self.llm = ChatVertexAI(
             model_name=LLM_MODEL,
             temperature=LLM_TEMPERATURE
         )
         self.prompt = ChatPromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
+        
+        # Current chat history for this request (passed from outside)
+        self._current_chat_history = []
         
         # Build the query generation chain
         self.generate_queries_chain = (
@@ -41,14 +42,41 @@ class RAGChain:
         
         # Build the conversational RAG chain
         self._build_chain()
-    
+
     def _format_docs(self, docs: List[Document]) -> str:
         """Format retrieved documents into a single string."""
         return "\n\n".join(str(doc.metadata) + doc.page_content for doc in docs)
 
     def _get_chat_history(self, _):
-        """Get chat history from memory."""
-        return self.memory.get_chat_history()
+        """Get chat history from the current request parameter."""
+        if not self._current_chat_history:
+            return ""
+        
+        formatted_history = []
+        for message in self._current_chat_history:
+            role = message.get("role", "")
+            content = message.get("content", "")
+            if role == "user":
+                formatted_history.append(f"Human: {content}")
+            elif role == "assistant":
+                formatted_history.append(f"Assistant: {content}")
+        
+        return "\n".join(formatted_history)
+    def _get_chat_history(self, _):
+        """Get chat history from the current request parameter."""
+        if not self._current_chat_history:
+            return ""
+        
+        formatted_history = []
+        for message in self._current_chat_history:
+            role = message.get("role", "")
+            content = message.get("content", "")
+            if role == "user":
+                formatted_history.append(f"Human: {content}")
+            elif role == "assistant":
+                formatted_history.append(f"Assistant: {content}")
+        
+        return "\n".join(formatted_history)
     
     def _flatten_docs(self, docs_per_query: List[List[Document]]) -> List[Document]:
         """Flattens the list of lists of documents into a single list."""
@@ -100,7 +128,7 @@ class RAGChain:
             flattened_docs = [dumps(doc) for doc in documents]
             # Get unique documents
             unique_docs = list(set(flattened_docs))
-            # Return
+            # Return the loaded documents
             return [loads(doc) for doc in unique_docs]
 
         # Multi-query retrieval logic chain
@@ -208,8 +236,11 @@ class RAGChain:
         self._last_retrieved_docs = []
         self._last_generated_queries = []
 
-    def chat_with_memory(self, question: str, query_method: str = "none", use_hyde: bool = False) -> dict:
+    def chat_with_memory(self, question: str, chat_history: List[Dict[str, str]] = None, query_method: str = "none", use_hyde: bool = False) -> dict:
         """Process a question with query translation and return both answer and retrieved documents."""
+        
+        # Set the chat history for this request
+        self._current_chat_history = chat_history or []
         
         # HyDE is not implemented yet
         if use_hyde:
@@ -232,17 +263,18 @@ class RAGChain:
         # Get response from the selected chain (this also populates _last_retrieved_docs and _last_generated_queries)
         response = chain.invoke(question)
         
-        # Save to memory
-        self.memory.save_context(question, response)
-        
         return {
             "response": response,
             "retrieved_docs": self._last_retrieved_docs,
             "generated_queries": self._last_generated_queries
         }
-    
-    def chat_without_rag(self, question: str) -> dict:
-        """Chat without RAG - just use conversation memory."""
+
+    def chat_without_rag(self, question: str, chat_history: List[Dict[str, str]] = None) -> dict:
+        """Chat without RAG - just use conversation history."""
+        
+        # Set the chat history for this request
+        self._current_chat_history = chat_history or []
+        
         # Simple conversation prompt without context
         simple_prompt = ChatPromptTemplate.from_template("""
         You are a helpful AI assistant specialized in SLEAP (Social LEAP Estimates Animal Poses), SLEAP-IO, and DREEM.
@@ -269,15 +301,14 @@ class RAGChain:
         
         response = simple_chain.invoke(question)
         
-        # Save to memory
-        self.memory.save_context(question, response)
-        
         return {
             "response": response,
             "retrieved_docs": [],
             "generated_queries": None
         }
-    
+
     def chat_without_memory(self, question: str) -> str:
         """Process a question without saving to memory."""
+        # Clear chat history for this request
+        self._current_chat_history = []
         return self.default_chain.invoke(question)
