@@ -303,7 +303,9 @@ class RAGChain:
             | simple_prompt
             | self.llm
             | StrOutputParser()
-        )
+        ).with_config({
+            "run_name": "chat_without_rag_chain"
+        })
         
         response_stream = simple_chain.stream(question)
         
