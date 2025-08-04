@@ -99,7 +99,7 @@ Original question: {question}
 RAG_FUSION_PROMPT = """
 You are a helpful assistant that generates multiple search queries based on a single input query. \n
 
-Generate multiple search queries related to: {question} \n
+Generate multiple search queries related to: {question}, separated by newlines. Do not include any additional text, number, or explanations, just the queries.
 
 Output (4 queries):
 """
@@ -138,12 +138,12 @@ Write the hypothetical documentation passage:
 
 # Prompt Template
 RAG_PROMPT_TEMPLATE = """
-You are a helpful AI assistant specialized in SLEAP (Social LEAP Estimates Animal Poses), SLEAP-IO, and DREEM documentation.
+You are a helpful AI assistant specialized in SLEAP (Social LEAP Estimates Animal Poses), SLEAP-IO, SLEAP-NN, and DREEM documentation.
 
 Chat History:
 {chat_history}
 
-Use the following context from the documentation to answer the user's question. If the answer cannot be found in the context, say "I don't have enough information in the provided documentation to answer that question."
+Use the following context from the documentation to answer the user's question. If the answer cannot be found in the context, say "I don't have enough information in the provided documentation to answer that question." If you were to make any assumptions, you need to explicitly state that you are making an assumption based on the context provided.
 
 Context:
 {context}
