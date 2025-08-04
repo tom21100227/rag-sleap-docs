@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 from pathlib import Path
+import time
 
 # Add the webapp directory to the Python path
 sys.path.append(str(Path(__file__).parent))
@@ -122,8 +123,72 @@ def main():
     
     # Display chat history
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        if message["role"] == "retriever":
+            # Display retriever results
+            with st.chat_message("assistant", avatar="🔍"):
+                st.markdown("**Retriever**: I found the following relevant documents:")
+                
+                retrieved_docs = message.get("retrieved_docs", [])
+                generated_queries = message.get("generated_queries")
+                
+                # Show generated queries if available
+                if generated_queries and len(generated_queries) > 1:
+                    with st.expander("🔄 Generated Queries", expanded=False):
+                        for i, query in enumerate(generated_queries, 1):
+                            st.markdown(f"{i}. {query}")
+                
+                if retrieved_docs:
+                    with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
+                        # Add tabs for different views
+                        tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
+                        
+                        with tab1:
+                            # Summary view
+                            sources = {}
+                            for doc in retrieved_docs:
+                                source = doc.metadata.get('source', 'Unknown')
+                                sources[source] = sources.get(source, 0) + 1
+                            
+                            st.markdown("**Sources Retrieved:**")
+                            for source, count in sources.items():
+                                st.markdown(f"- {source}: {count} document(s)")
+                        
+                        with tab2:
+                            # Detailed view
+                            for i, doc in enumerate(retrieved_docs, 1):
+                                with st.container():
+                                    st.markdown(f"### Document {i}")
+                                    
+                                    # Metadata in columns
+                                    col1, col2, col3 = st.columns([1, 1, 1])
+                                    with col1:
+                                        st.markdown(f"**Source:** `{doc.metadata.get('source', 'Unknown')}`")
+                                    with col2:
+                                        st.markdown(f"**File:** `{doc.metadata.get('file', 'Unknown')}`")
+                                    with col3:
+                                        if 'object' in doc.metadata:
+                                            st.markdown(f"**Object:** `{doc.metadata['object']}`")
+                                    
+                                    # Content
+                                    content_preview = doc.page_content[:max_content_length]
+                                    if len(doc.page_content) > max_content_length:
+                                        content_preview += "..."
+                                    
+                                    st.markdown("**Content:**")
+                                    st.text_area(
+                                        f"Document {i} Content",
+                                        content_preview,
+                                        height=150,
+                                        key=f"doc_content_{i}_{message['timestamp']}",
+                                        label_visibility="collapsed"
+                                    )
+                                    
+                                    if i < len(retrieved_docs):
+                                        st.divider()
+        else:
+            # Display regular user/assistant messages
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
     
     # Chat input
     if prompt := st.chat_input("Ask a question about SLEAP..."):
@@ -134,10 +199,10 @@ def main():
         
         # Generate response and get retrieved documents
         try:
-            with st.spinner("Thinking..."):
-                # Prepare chat history (exclude the current message we just added)
-                chat_history = st.session_state.messages[:-1] if st.session_state.messages else []
-                
+            # Prepare chat history (exclude the current message we just added)
+            chat_history = st.session_state.messages[:-1] if st.session_state.messages else []
+            
+            with st.spinner("Retrieving documents..."):
                 if should_bypass_rag:
                     result = rag_chain.chat_without_rag(prompt, chat_history=chat_history)
                 else:
@@ -151,20 +216,35 @@ def main():
                         query_method=available_methods[query_method],
                         use_hyde=use_hyde
                     )
-                response = result["response"]
-                retrieved_docs = result["retrieved_docs"]
-                generated_queries = result.get("generated_queries")
+            
+            # Extract metadata and stream
+            retrieved_docs = result["retrieved_docs"]
+            generated_queries = result.get("generated_queries")
+            response_stream = result["response_stream"]
+            
         except Exception as e:
             error_msg = f"Sorry, I encountered an error: {str(e)}"
-            response = error_msg
+            # Create a simple generator for the error message
+            def error_stream():
+                yield error_msg
+            response_stream = error_stream()
             retrieved_docs = []
             generated_queries = None
         
         # Mark that we've had a chat (this will auto-check bypass RAG on next rerun)
         st.session_state.has_chatted = True
         
-        # Show retrieved documents as a separate "Retriever" entity FIRST
-        if not should_bypass_rag and show_retrieved_docs and retrieved_docs:
+        # Save retrieved documents to chat history for persistence
+        if not should_bypass_rag and retrieved_docs:
+            retriever_message = {
+                "role": "retriever",
+                "retrieved_docs": retrieved_docs,
+                "generated_queries": generated_queries,
+                "timestamp": int(time.time() * 1000)  # Unique timestamp for keys
+            }
+            st.session_state.messages.append(retriever_message)
+            
+            # Display the retriever results immediately (will also appear in history)
             with st.chat_message("assistant", avatar="🔍"):
                 st.markdown("**Retriever**: I found the following relevant documents:")
                 
@@ -174,57 +254,59 @@ def main():
                         for i, query in enumerate(generated_queries, 1):
                             st.markdown(f"{i}. {query}")
                 
-                with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
-                    # Add tabs for different views
-                    tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
-                    
-                    with tab1:
-                        # Summary view
-                        sources = {}
-                        for doc in retrieved_docs:
-                            source = doc.metadata.get('source', 'Unknown')
-                            sources[source] = sources.get(source, 0) + 1
+                if show_retrieved_docs:
+                    with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
+                        # Add tabs for different views
+                        tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
                         
-                        st.markdown("**Sources Retrieved:**")
-                        for source, count in sources.items():
-                            st.markdown(f"- {source}: {count} document(s)")
-                    
-                    with tab2:
-                        # Detailed view
-                        for i, doc in enumerate(retrieved_docs, 1):
-                            with st.container():
-                                st.markdown(f"### Document {i}")
-                                
-                                # Metadata in columns
-                                col1, col2, col3 = st.columns([1, 1, 1])
-                                with col1:
-                                    st.markdown(f"**Source:** `{doc.metadata.get('source', 'Unknown')}`")
-                                with col2:
-                                    st.markdown(f"**File:** `{doc.metadata.get('file', 'Unknown')}`")
-                                with col3:
-                                    if 'object' in doc.metadata:
-                                        st.markdown(f"**Object:** `{doc.metadata['object']}`")
-                                
-                                # Content
-                                content_preview = doc.page_content[:max_content_length]
-                                if len(doc.page_content) > max_content_length:
-                                    content_preview += "..."
-                                
-                                st.markdown("**Content:**")
-                                st.text_area(
-                                    f"Document {i} Content",
-                                    content_preview,
-                                    height=150,
-                                    key=f"doc_content_{i}_{len(st.session_state.messages)}",
-                                    label_visibility="collapsed"
-                                )
-                                
-                                if i < len(retrieved_docs):
-                                    st.divider()
+                        with tab1:
+                            # Summary view
+                            sources = {}
+                            for doc in retrieved_docs:
+                                source = doc.metadata.get('source', 'Unknown')
+                                sources[source] = sources.get(source, 0) + 1
+                            
+                            st.markdown("**Sources Retrieved:**")
+                            for source, count in sources.items():
+                                st.markdown(f"- {source}: {count} document(s)")
+                        
+                        with tab2:
+                            # Detailed view
+                            for i, doc in enumerate(retrieved_docs, 1):
+                                with st.container():
+                                    st.markdown(f"### Document {i}")
+                                    
+                                    # Metadata in columns
+                                    col1, col2, col3 = st.columns([1, 1, 1])
+                                    with col1:
+                                        st.markdown(f"**Source:** `{doc.metadata.get('source', 'Unknown')}`")
+                                    with col2:
+                                        st.markdown(f"**File:** `{doc.metadata.get('file', 'Unknown')}`")
+                                    with col3:
+                                        if 'object' in doc.metadata:
+                                            st.markdown(f"**Object:** `{doc.metadata['object']}`")
+                                    
+                                    # Content
+                                    content_preview = doc.page_content[:max_content_length]
+                                    if len(doc.page_content) > max_content_length:
+                                        content_preview += "..."
+                                    
+                                    st.markdown("**Content:**")
+                                    st.text_area(
+                                        f"Document {i} Content",
+                                        content_preview,
+                                        height=150,
+                                        key=f"doc_content_{i}_{retriever_message['timestamp']}",
+                                        label_visibility="collapsed"
+                                    )
+                                    
+                                    if i < len(retrieved_docs):
+                                        st.divider()
         
-        # Show assistant response AFTER retriever
+        # Show assistant response AFTER retriever with streaming
         with st.chat_message("assistant"):
-            st.markdown(response)
+            # Stream the response and accumulate it
+            response = st.write_stream(response_stream)
         
         # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response})

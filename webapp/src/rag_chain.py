@@ -11,7 +11,7 @@ from config.settings import (
 )
 import vertexai
 from config.settings import GOOGLE_CLOUD_PROJECT_ID
-from typing import List, Dict, Any
+from typing import List, Dict, Optional, Dict, Any
 import numpy as np
 
 
@@ -236,8 +236,8 @@ class RAGChain:
         self._last_retrieved_docs = []
         self._last_generated_queries = []
 
-    def chat_with_memory(self, question: str, chat_history: List[Dict[str, str]] = None, query_method: str = "none", use_hyde: bool = False) -> dict:
-        """Process a question with query translation and return both answer and retrieved documents."""
+    def chat_with_memory(self, question: str, chat_history: Optional[List[Dict[str, str]]] = None, query_method: str = "none", use_hyde: bool = False) -> dict:
+        """Process a question with query translation and return streaming response with metadata."""
         
         # Set the chat history for this request
         self._current_chat_history = chat_history or []
@@ -246,13 +246,53 @@ class RAGChain:
         if use_hyde:
             raise NotImplementedError("HyDE is not implemented yet.")
         
-        # Select the appropriate chain - retrieval and storage happens inside the chain
+        # Reset the state first
+        self._last_retrieved_docs = []
+        self._last_generated_queries = []
+        
+        # Do retrieval first to populate metadata
         if query_method == "none":
-            chain = self.default_chain
+            # Simple single query retrieval
+            retrieved_docs = self.retriever.get_relevant_documents(question)
+            generated_queries = None
         elif query_method == "multi_query":
-            chain = self.multi_query_chain
+            # Generate queries first
+            generated_queries = self._parse_queries(
+                (ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT) | self.llm | StrOutputParser()).invoke({"question": question})
+            )
+            # Retrieve using all queries
+            docs_per_query = [self.retriever.get_relevant_documents(q) for q in generated_queries]
+            retrieved_docs = self._flatten_docs(docs_per_query)
+            # Deduplicate
+            seen_docs = set()
+            unique_docs = []
+            for doc in retrieved_docs:
+                doc_key = doc.page_content[:100]
+                if doc_key not in seen_docs:
+                    seen_docs.add(doc_key)
+                    unique_docs.append(doc)
+            retrieved_docs = unique_docs[:6]  # Limit to 6 docs
         elif query_method == "rag_fusion":
-            chain = self.rag_fusion_chain
+            # Generate queries first
+            generated_queries = self._parse_queries(
+                (ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT) | self.llm | StrOutputParser()).invoke({"question": question})
+            )
+            # Retrieve using all queries and apply RRF
+            docs_per_query = [self.retriever.get_relevant_documents(q) for q in generated_queries]
+            # Apply reciprocal rank fusion
+            fused_scores = {}
+            for docs in docs_per_query:
+                for rank, doc in enumerate(docs):
+                    doc_str = dumps(doc)
+                    if doc_str not in fused_scores:
+                        fused_scores[doc_str] = 0
+                    fused_scores[doc_str] += 1 / (rank + 60)
+            
+            reranked_results = [
+                loads(doc)
+                for doc, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+            ]
+            retrieved_docs = reranked_results[:6]  # Limit to 6 docs
         elif query_method == "decomposition":
             raise NotImplementedError("Decomposition is not implemented yet.")
         elif query_method == "step_back":
@@ -260,16 +300,34 @@ class RAGChain:
         else:
             raise ValueError(f"Unknown query method: {query_method}")
         
-        # Get response from the selected chain (this also populates _last_retrieved_docs and _last_generated_queries)
-        response = chain.invoke(question)
+        # Store metadata for UI display
+        self._last_retrieved_docs = retrieved_docs
+        self._last_generated_queries = generated_queries
+        
+        # Now create streaming response with the retrieved context
+        context = self._format_docs(retrieved_docs)
+        
+        # Create a simple streaming chain for just the LLM response
+        streaming_chain = (
+            {
+                "context": lambda _: context,
+                "question": RunnablePassthrough(),
+                "chat_history": RunnableLambda(self._get_chat_history),
+            }
+            | self.prompt
+            | self.llm
+            | StrOutputParser()
+        )
+        
+        response_stream = streaming_chain.stream(question)
         
         return {
-            "response": response,
-            "retrieved_docs": self._last_retrieved_docs,
-            "generated_queries": self._last_generated_queries
+            "response_stream": response_stream,
+            "retrieved_docs": retrieved_docs,
+            "generated_queries": generated_queries
         }
 
-    def chat_without_rag(self, question: str, chat_history: List[Dict[str, str]] = None) -> dict:
+    def chat_without_rag(self, question: str, chat_history: Optional[List[Dict[str, str]]] = None) -> dict:
         """Chat without RAG - just use conversation history."""
         
         # Set the chat history for this request
@@ -299,10 +357,10 @@ class RAGChain:
             | StrOutputParser()
         )
         
-        response = simple_chain.invoke(question)
+        response_stream = simple_chain.stream(question)
         
         return {
-            "response": response,
+            "response_stream": response_stream,
             "retrieved_docs": [],
             "generated_queries": None
         }
