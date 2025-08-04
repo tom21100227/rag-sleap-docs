@@ -198,118 +198,143 @@ def main():
             st.markdown(prompt)
         
         # Generate response and get retrieved documents
+        retrieved_docs = []
+        generated_queries = None
+        response = ""
+        
         try:
             # Prepare chat history (exclude the current message we just added)
             chat_history = st.session_state.messages[:-1] if st.session_state.messages else []
             
-            with st.spinner("Retrieving documents..."):
-                if should_bypass_rag:
-                    result = rag_chain.chat_without_rag(prompt, chat_history=chat_history)
-                else:
-                    # Use the filtered available methods
-                    available_methods = {k: v for k, v in QUERY_TRANSLATION_METHODS.items() 
-                                       if k not in ["Step Back", "Decomposition"]}
+            if should_bypass_rag:
+                result = rag_chain.chat_without_rag(prompt, chat_history=chat_history)
+                response_stream = result["response_stream"]
+                retrieved_docs = []
+                generated_queries = None
+                
+                # Show assistant response immediately for non-RAG
+                with st.chat_message("assistant"):
+                    response = st.write_stream(response_stream)
                     
-                    result = rag_chain.chat_with_memory(
-                        prompt,
-                        chat_history=chat_history,
-                        query_method=available_methods[query_method],
-                        use_hyde=use_hyde
-                    )
-            
-            # Extract metadata and stream
-            retrieved_docs = result["retrieved_docs"]
-            generated_queries = result.get("generated_queries")
-            response_stream = result["response_stream"]
-            
+            else:
+                # Use the filtered available methods
+                available_methods = {k: v for k, v in QUERY_TRANSLATION_METHODS.items() 
+                                   if k not in ["Step Back", "Decomposition"]}
+                
+                result = rag_chain.chat_with_memory(
+                    prompt,
+                    chat_history=chat_history,
+                    query_method=available_methods[query_method],
+                    use_hyde=use_hyde
+                )
+                
+                response_stream = result["response_stream"]
+                retrieval_event = result["retrieval_event"]
+                
+                retriever_placeholder = st.empty()
+                assistant_placeholder = st.empty()
+                
+                with retriever_placeholder.container():
+                    with st.chat_message("assistant", avatar="🔍"):
+                        st.markdown("Retrieving documents...")
+                
+                with assistant_placeholder.container():
+                    with st.chat_message("assistant"):
+                        assistant_response_box = st.empty()
+                
+                 # 5. Manually iterate the stream to control UI updates
+                full_response = ""
+                retriever_displayed = False
+                for chunk in response_stream:
+                    
+                    # 6. After the first chunk, retrieval is done. Update the retriever UI.
+                    if not retriever_displayed:
+                        # Wait for the event just to be safe. This ensures the
+                        # _save_retrieval_state function has completed.
+                        retrieval_event.wait(timeout=5)
+                        
+                        retrieved_docs = rag_chain._last_retrieved_docs
+                        generated_queries = rag_chain._last_generated_queries
+
+                        # Now, populate the retriever placeholder with the actual results
+                        with retriever_placeholder.container():
+                            # Using your existing display logic here!
+                            with st.chat_message("assistant", avatar="🔍"):
+                                st.markdown("**Retriever**: Found the following relevant documents:")
+                                
+                                if generated_queries and len(generated_queries) > 1:
+                                    with st.expander("🔄 Generated Queries", expanded=False):
+                                        for i, query in enumerate(generated_queries, 1):
+                                            st.markdown(f"{i}. {query}")
+                                
+                                if show_retrieved_docs and retrieved_docs:
+                                    with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
+                                        # ... (your tabs and detailed view logic) ...
+                                        # I've copied your full display logic here for completeness
+                                        tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
+                                        with tab1:
+                                            sources = {doc.metadata.get('source', 'Unknown'): 0 for doc in retrieved_docs}
+                                            for doc in retrieved_docs:
+                                                sources[doc.metadata.get('source', 'Unknown')] += 1
+                                            st.markdown("**Sources Retrieved:**")
+                                            for source, count in sources.items():
+                                                st.markdown(f"- {source}: {count} document(s)")
+                                        with tab2:
+                                            for i, doc in enumerate(retrieved_docs, 1):
+                                                with st.container():
+                                                    # ... your full detailed document display code ...
+                                                    st.markdown(f"**Document {i}** | **Source:** `{doc.metadata.get('source', 'N/A')}`")
+                                                    content_preview = doc.page_content[:max_content_length] + "..." if len(doc.page_content) > max_content_length else doc.page_content
+                                                    st.text_area(f"doc_{i}", content_preview, height=150, label_visibility="collapsed")
+
+
+                        # Save retriever message to history so it reappears on reruns
+                        if retrieved_docs:
+                            st.session_state.messages.append({
+                                "role": "retriever",
+                                "retrieved_docs": retrieved_docs,
+                                "generated_queries": generated_queries,
+                                "timestamp": int(time.time() * 1000)
+                            })
+                        
+                        retriever_displayed = True  # Ensure this only runs once
+
+                    # 7. Append the current chunk and update the assistant's response
+                    full_response += chunk
+                    assistant_response_box.markdown(full_response + "▌")
+
+                # 8. Final update to remove the cursor and save the message
+                assistant_response_box.markdown(full_response)
+                if full_response:
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                response = full_response # For saving later
+
         except Exception as e:
             error_msg = f"Sorry, I encountered an error: {str(e)}"
-            # Create a simple generator for the error message
-            def error_stream():
-                yield error_msg
-            response_stream = error_stream()
             retrieved_docs = []
             generated_queries = None
+            
+            # Show error response
+            with st.chat_message("assistant"):
+                st.error(error_msg)
+                response = error_msg
         
         # Mark that we've had a chat (this will auto-check bypass RAG on next rerun)
         st.session_state.has_chatted = True
         
-        # Save retrieved documents to chat history for persistence
-        if not should_bypass_rag and retrieved_docs:
-            retriever_message = {
-                "role": "retriever",
-                "retrieved_docs": retrieved_docs,
-                "generated_queries": generated_queries,
-                "timestamp": int(time.time() * 1000)  # Unique timestamp for keys
-            }
-            st.session_state.messages.append(retriever_message)
-            
-            # Display the retriever results immediately (will also appear in history)
-            with st.chat_message("assistant", avatar="🔍"):
-                st.markdown("**Retriever**: I found the following relevant documents:")
-                
-                # Show generated queries if available
-                if generated_queries and len(generated_queries) > 1:
-                    with st.expander("🔄 Generated Queries", expanded=False):
-                        for i, query in enumerate(generated_queries, 1):
-                            st.markdown(f"{i}. {query}")
-                
-                if show_retrieved_docs:
-                    with st.expander(f"📚 Retrieved Documents ({len(retrieved_docs)} found)", expanded=False):
-                        # Add tabs for different views
-                        tab1, tab2 = st.tabs(["📋 Summary", "📖 Details"])
-                        
-                        with tab1:
-                            # Summary view
-                            sources = {}
-                            for doc in retrieved_docs:
-                                source = doc.metadata.get('source', 'Unknown')
-                                sources[source] = sources.get(source, 0) + 1
-                            
-                            st.markdown("**Sources Retrieved:**")
-                            for source, count in sources.items():
-                                st.markdown(f"- {source}: {count} document(s)")
-                        
-                        with tab2:
-                            # Detailed view
-                            for i, doc in enumerate(retrieved_docs, 1):
-                                with st.container():
-                                    st.markdown(f"### Document {i}")
-                                    
-                                    # Metadata in columns
-                                    col1, col2, col3 = st.columns([1, 1, 1])
-                                    with col1:
-                                        st.markdown(f"**Source:** `{doc.metadata.get('source', 'Unknown')}`")
-                                    with col2:
-                                        st.markdown(f"**File:** `{doc.metadata.get('file', 'Unknown')}`")
-                                    with col3:
-                                        if 'object' in doc.metadata:
-                                            st.markdown(f"**Object:** `{doc.metadata['object']}`")
-                                    
-                                    # Content
-                                    content_preview = doc.page_content[:max_content_length]
-                                    if len(doc.page_content) > max_content_length:
-                                        content_preview += "..."
-                                    
-                                    st.markdown("**Content:**")
-                                    st.text_area(
-                                        f"Document {i} Content",
-                                        content_preview,
-                                        height=150,
-                                        key=f"doc_content_{i}_{retriever_message['timestamp']}",
-                                        label_visibility="collapsed"
-                                    )
-                                    
-                                    if i < len(retrieved_docs):
-                                        st.divider()
-        
-        # Show assistant response AFTER retriever with streaming
-        with st.chat_message("assistant"):
-            # Stream the response and accumulate it
-            response = st.write_stream(response_stream)
+        # # Save retrieved documents to chat history for persistence
+        # if not should_bypass_rag and retrieved_docs:
+        #     retriever_message = {
+        #         "role": "retriever",
+        #         "retrieved_docs": retrieved_docs,
+        #         "generated_queries": generated_queries,
+        #         "timestamp": int(time.time() * 1000)  # Unique timestamp for keys
+        #     }
+        #     st.session_state.messages.append(retriever_message)
         
         # Add assistant response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        if should_bypass_rag:
+            st.session_state.messages.append({"role": "assistant", "content": response})
 
 
 if __name__ == "__main__":

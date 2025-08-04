@@ -5,7 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
 from langchain.load import dumps, loads
 from config.settings import (
-    LLM_MODEL, LLM_TEMPERATURE, RAG_PROMPT_TEMPLATE,
+    QUERY_LLM_MODEL, QUERY_LLM_TEMPERATURE, LLM_MODEL, LLM_TEMPERATURE, RAG_PROMPT_TEMPLATE,
     MULTI_QUERY_PROMPT, RAG_FUSION_PROMPT, DECOMPOSITION_PROMPT, 
     STEP_BACK_PROMPT, HYDE_PROMPT
 )
@@ -13,6 +13,7 @@ import vertexai
 from config.settings import GOOGLE_CLOUD_PROJECT_ID
 from typing import List, Dict, Optional, Dict, Any
 import numpy as np
+import threading
 
 
 class RAGChain:
@@ -27,15 +28,23 @@ class RAGChain:
             model_name=LLM_MODEL,
             temperature=LLM_TEMPERATURE
         )
+        
+        self.query_llm = ChatVertexAI(
+            model_name=QUERY_LLM_MODEL,
+            temperature=LLM_TEMPERATURE
+        )
         self.prompt = ChatPromptTemplate.from_template(RAG_PROMPT_TEMPLATE)
         
         # Current chat history for this request (passed from outside)
         self._current_chat_history = []
         
+        # Threading event for retrieval completion
+        self.retrieval_ready = threading.Event()
+        
         # Build the query generation chain
         self.generate_queries_chain = (
             ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT)
-            | self.llm
+            | self.query_llm
             | StrOutputParser()
             | RunnableLambda(self._parse_queries)
         )
@@ -47,21 +56,6 @@ class RAGChain:
         """Format retrieved documents into a single string."""
         return "\n\n".join(str(doc.metadata) + doc.page_content for doc in docs)
 
-    def _get_chat_history(self, _):
-        """Get chat history from the current request parameter."""
-        if not self._current_chat_history:
-            return ""
-        
-        formatted_history = []
-        for message in self._current_chat_history:
-            role = message.get("role", "")
-            content = message.get("content", "")
-            if role == "user":
-                formatted_history.append(f"Human: {content}")
-            elif role == "assistant":
-                formatted_history.append(f"Assistant: {content}")
-        
-        return "\n".join(formatted_history)
     def _get_chat_history(self, _):
         """Get chat history from the current request parameter."""
         if not self._current_chat_history:
@@ -89,6 +83,10 @@ class RAGChain:
         """
         self._last_retrieved_docs = chain_output.get("retrieved_docs", [])
         self._last_generated_queries = chain_output.get("generated_queries", [])
+        
+        # Signal that retrieval is complete
+        self.retrieval_ready.set()
+        
         return chain_output  # Must return the input to not break the chain
     
     def _parse_queries(self, result: str) -> List[str]:
@@ -249,82 +247,32 @@ class RAGChain:
         # Reset the state first
         self._last_retrieved_docs = []
         self._last_generated_queries = []
+        self.retrieval_ready.clear()  # Reset the threading event
         
-        # Do retrieval first to populate metadata
+        # Select the appropriate chain based on query method
         if query_method == "none":
-            # Simple single query retrieval
-            retrieved_docs = self.retriever.get_relevant_documents(question)
-            generated_queries = None
+            chain = self.default_chain
         elif query_method == "multi_query":
-            # Generate queries first
-            generated_queries = self._parse_queries(
-                (ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT) | self.llm | StrOutputParser()).invoke({"question": question})
-            )
-            # Retrieve using all queries
-            docs_per_query = [self.retriever.get_relevant_documents(q) for q in generated_queries]
-            retrieved_docs = self._flatten_docs(docs_per_query)
-            # Deduplicate
-            seen_docs = set()
-            unique_docs = []
-            for doc in retrieved_docs:
-                doc_key = doc.page_content[:100]
-                if doc_key not in seen_docs:
-                    seen_docs.add(doc_key)
-                    unique_docs.append(doc)
-            retrieved_docs = unique_docs[:6]  # Limit to 6 docs
+            chain = self.multi_query_chain
         elif query_method == "rag_fusion":
-            # Generate queries first
-            generated_queries = self._parse_queries(
-                (ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT) | self.llm | StrOutputParser()).invoke({"question": question})
-            )
-            # Retrieve using all queries and apply RRF
-            docs_per_query = [self.retriever.get_relevant_documents(q) for q in generated_queries]
-            # Apply reciprocal rank fusion
-            fused_scores = {}
-            for docs in docs_per_query:
-                for rank, doc in enumerate(docs):
-                    doc_str = dumps(doc)
-                    if doc_str not in fused_scores:
-                        fused_scores[doc_str] = 0
-                    fused_scores[doc_str] += 1 / (rank + 60)
-            
-            reranked_results = [
-                loads(doc)
-                for doc, score in sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
-            ]
-            retrieved_docs = reranked_results[:6]  # Limit to 6 docs
+            chain = self.rag_fusion_chain
         elif query_method == "decomposition":
-            raise NotImplementedError("Decomposition is not implemented yet.")
+            if self.decomposition_chain is None:
+                raise NotImplementedError("Decomposition is not implemented yet.")
+            chain = self.decomposition_chain
         elif query_method == "step_back":
-            raise NotImplementedError("Step Back is not implemented yet.")
+            if self.step_back_chain is None:
+                raise NotImplementedError("Step Back is not implemented yet.")
+            chain = self.step_back_chain
         else:
             raise ValueError(f"Unknown query method: {query_method}")
         
-        # Store metadata for UI display
-        self._last_retrieved_docs = retrieved_docs
-        self._last_generated_queries = generated_queries
-        
-        # Now create streaming response with the retrieved context
-        context = self._format_docs(retrieved_docs)
-        
-        # Create a simple streaming chain for just the LLM response
-        streaming_chain = (
-            {
-                "context": lambda _: context,
-                "question": RunnablePassthrough(),
-                "chat_history": RunnableLambda(self._get_chat_history),
-            }
-            | self.prompt
-            | self.llm
-            | StrOutputParser()
-        )
-        
-        response_stream = streaming_chain.stream(question)
+        # Stream the response from the selected chain
+        response_stream = chain.stream(question)
         
         return {
             "response_stream": response_stream,
-            "retrieved_docs": retrieved_docs,
-            "generated_queries": generated_queries
+            "retrieval_event": self.retrieval_ready
         }
 
     def chat_without_rag(self, question: str, chat_history: Optional[List[Dict[str, str]]] = None) -> dict:
