@@ -63,13 +63,6 @@ def main():
         
         st.markdown("---")
         
-        # Add document display settings
-        st.subheader("📄 Document Display")
-        show_retrieved_docs = st.checkbox("Show retrieved documents", value=True)
-        max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
-        
-        st.markdown("---")
-        
         # RAG Controls
         st.subheader("🔧 Query Settings")
 
@@ -114,6 +107,14 @@ def main():
             st.info("🔍 RAG mode (first question)")
         else:
             st.info("🔍 RAG mode")
+            
+        st.markdown("---")
+        
+        # Add document display settings
+        st.subheader("📄 Document Display")
+        show_retrieved_docs = st.checkbox("Show retrieved documents", value=True)
+        max_content_length = st.slider("Content preview length", 100, 1000, 300, 50)
+        
     
     # Chat interface
     if "messages" not in st.session_state:
